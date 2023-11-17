@@ -1,30 +1,19 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Security Group and Basic Instance creation in Public2 Subnet'
-
-
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template WordPress_Single_Instance: WordPress is web
+  software you can use to create a beautiful website or blog. This template
+  installs WordPress with a local MySQL database for storage. It demonstrates
+  using the AWS CloudFormation bootstrap scripts to deploy WordPress.
+  **WARNING** This template creates an Amazon EC2 instance. You will be billed
+  for the AWS resources used if you create a stack from this template.
 Parameters:
-  UserConfig:
-    Type: String
-    Description: "Configuration identifier representing the user's selections from the network stack"
-    Default: !ImportValue "${NetworkStackName}-UserConfiguration"
-
-  VPCId:
-    Type: String
-    Default: !ImportValue "${NetworkStackName}-VPCId"
-
-  PublicSubnet2AZ1Id:
-    Type: String
-    Default: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"
-
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
     Type: 'AWS::EC2::KeyPair::KeyName'
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
-
   ImageId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2  
-  
   SSHLocation:
     Description: The IP address range that can be used to SSH to the EC2 instances
     Type: String
@@ -33,7 +22,6 @@ Parameters:
     Default: 0.0.0.0/0
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
-
   DBName:
     Default: wordpressdb
     Description: The WordPress database name
@@ -67,130 +55,172 @@ Parameters:
     AllowedPattern: '[a-zA-Z0-9]*'
     ConstraintDescription: must contain only alphanumeric characters.
 
-Conditions:
-  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
-  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
-
 Resources:
-  AZ1Public1SG:
-    Type: AWS::EC2::SecurityGroup
+ # Create VPC, with CIDR value 16  so that enough IP's available
+  MyLabVPC:
+    Type: AWS::EC2::VPC
     Properties:
-      GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCId
-      # No SSH ingress rule needed
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public1SG" ]]
-  AZ1Public2SG:
-    Type: AWS::EC2::SecurityGroup
+          Value:  !Join ['', [!Ref "AWS::StackName", "-MyLabVPC" ]]
+   # Create Internet Gateway
+  MyLabIGW:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: MyLabVPC
     Properties:
-      GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCId
-      # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public2SG" ]]
-  AZ1Private1SG:
+          Value: MyLabIGW
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    # Depends ON is used.
+    Properties:
+      VpcId: !Ref MyLabVPC
+      InternetGatewayId: !Ref MyLabIGW
+  # Public Subnet -1
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: 
+        'Fn::Select': 
+          - 0
+          - 'Fn::GetAZs': ''
+      MapPublicIpOnLaunch: true  # Ensures that instances receive a public IP
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-A"
+   # Public Subnet -2
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: 
+        'Fn::Select': 
+          - 0
+          - 'Fn::GetAZs': ''
+      MapPublicIpOnLaunch: true  # Ensures that instances receive a public IP
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-B"
+   # Private Subnet -1
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: 10.0.50.0/24
+      AvailabilityZone: 
+        'Fn::Select': 
+          - 0
+          - 'Fn::GetAZs': ''
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-A"
+    # Private Subnet -2
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: 10.0.60.0/24
+      AvailabilityZone: 
+        'Fn::Select': 
+          - 0
+          - 'Fn::GetAZs': ''
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-B"
+  # Public Routing Table:
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+      - Key: Name
+        Value: PublicRouteTable
+  PublicRoute:   # Public route table is routing directly to IGW, Creating only 1 as we are on single AZ
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyLabIGW 
+  # Creating a NAT Gateway
+# Creating an Elastic IP address
+  ElasticIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+     Domain: MyLabVPC
+     Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-ElasticIPAddress" ]]     
+# Creating a NAT Gateway
+  MyNAT:
+   Type: AWS::EC2::NatGateway
+   Properties:
+     AllocationId: !GetAtt ElasticIPAddress.AllocationId
+     SubnetId: !Ref PublicSubnetA
+     Tags:
+     - Key: Name
+       Value: !Sub MyNAT-${AWS::StackName}
+  # Private Routing Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+      - Key: Name
+        Value: PrivateRouteTable
+  PrivateRoute:   # Private route table , Creating only 1 as we are on single AZ
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      # Route traffic through the NAT Gateway:
+      NatGatewayId: !Ref MyNAT
+  # Attaching Private and Public Subnets respectively to Private and Public Routing Tables  
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+  # Subnet allocation for Lab with /24 
+  WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCId
+      GroupDescription: "Enable HTTP access via port 80 + SSH access"
+      VpcId: !Ref MyLabVPC
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Private2SG
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref AZ1Private2SG
+      - CidrIp: 0.0.0.0/0
+        FromPort: 80
+        IpProtocol: tcp
+        ToPort: 80
+      - CidrIp: !Ref SSHLocation
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
       Tags:
         - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]]
-  AZ1Private2SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref MyVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Private1SG
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private2SG" ]]
-
-# Conditional security groups for AZ2
-  AZ2Public1SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCId
-      # No SSH ingress rule needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Public1SG" ]]
-
-  AZ2Public2SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCId
-      # Currently no specific ingress and egress rules as needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Public2SG" ]]
-
-  AZ2Private1SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Private2SG
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref AZ2Private2SG
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Private1SG" ]]
-
-  AZ2Private2SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref MyVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Private1SG
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Private2SG" ]]
-
- #Basic Server instance creating for this lab is a wordpress server, the same Instance's AMI ID will be used to create the DB
+          Value: WebServerSecurityGroup
   WebServer:
     Type: 'AWS::EC2::Instance'
     Metadata:
@@ -340,9 +370,9 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
-      SubnetId: !Ref PublicSubnet2AZ1Id
+      SubnetId: !Ref PublicSubnetA
       SecurityGroupIds:
-         - !GetAtt AZ1Public2SG.GroupId
+         - !GetAtt WebServerSecurityGroup.GroupId
       KeyName: !Ref KeyName
       UserData:
         Fn::Base64: !Sub |
@@ -371,77 +401,7 @@ Resources:
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
- # Lamda function 
-  AMICreationLambdaFunction:
-    Type: 'AWS::Lambda::Function'
-    Properties:
-      Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.8
-      Code:
-        ZipFile: |
-          import boto3
-          import cfnresponse
-          def handler(event, context):
-              ec2 = boto3.client('ec2')
-              ssm = boto3.client('ssm')
-              try:
-                  instance_id = event['ResourceProperties']['InstanceId']
-                  ami_response = ec2.create_image(
-                      InstanceId=instance_id,
-                      Name='AutoGeneratedAMI',
-                      NoReboot=True,
-                      Description='AMI generated by Lambda'
-                  )
-                  ami_id = ami_response['ImageId']
-                  ssm.put_parameter(
-                      Name='MyAmiId',  # Ensure this matches the name in your CF template
-                      Value=ami_id,
-                      Overwrite=True,
-                      Type='String'
-                  )
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'AMIId': ami_id})
-              except Exception as e:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Data': str(e)})
-    Description: Creating custom image of webserver
-    DependsOn: LambdaExecutionRole
-  #This parameter stores the ID of the Amazon Machine Image (AMI) created by the Lambda function for deploying EC2 instances.
-  AmiIdParameter:
-    Type: 'AWS::SSM::Parameter'
-    Properties:
-      Name: 'MyAmiId'
-      Type: 'String'
-      Value: 'pending'  # Initial value, will be updated by Lambda
-  # IAM Role for Lambda
-  LambdaExecutionRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: 'Allow'
-            Principal:
-              Service: 'lambda.amazonaws.com'
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: 'root'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: 'Allow'
-                Action:
-                  - 'ec2:CreateImage'
-                  - 'ssm:PutParameter'
-                Resource: '*'
-  # Custom Resource to trigger Lambda
-  AMICreationCustomResource:
-    Type: 'Custom::AMIcreation'
-    Properties:
-      ServiceToken: !GetAtt AMICreationLambdaFunction.Arn
-    DependsOn: WebServer
-
 Outputs:
-
   WebsiteURL:
     Value: !Join 
       - ''
@@ -451,50 +411,3 @@ Outputs:
           - PublicDnsName
         - /wordpress
     Description: WordPress Website
-
-  AMIID:
-    Description: "ID of the AMI created by the Lambda function. Use this ID as a parameter when creating subsequent stacks."
-    Value: !Ref AmiIdParameter
-  
-  AZ1Public1SGId:
-    Description: "ID of Security Group for AZ1 Public Subnet 1"
-    Value: !GetAtt AZ1Public1SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Public1SGId"
-
-  AZ1Public2SGId:
-    Description: "ID of Security Group for AZ1 Public Subnet 2"
-    Value: !GetAtt AZ1Public2SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Public2SGId"
-
-  AZ1Private1SGId:
-    Description: "ID of Security Group for AZ1 Private Subnet 1"
-    Value: !GetAtt AZ1Private1SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Private1SGId"
-
-  AZ1Private2SGId:
-    Description: "ID of Security Group for AZ1 Private Subnet 2"
-    Value: !GetAtt AZ1Private2SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Private2SGId"
-  AZ2Public1SGId:
-    Condition: CreateTwoAdditionalSGs
-    Description: "ID of Security Group for AZ2 Public Subnet 1"
-    Value: !GetAtt AZ2Public1SG.GroupId
-
-  AZ2Public2SGId:
-    Condition: CreateFourAdditionalSGs
-    Description: "ID of Security Group for AZ2 Public Subnet 2"
-    Value: !GetAtt AZ2Public2SG.GroupId
-
-  AZ2Private1SGId:
-    Condition: CreateTwoAdditionalSGs
-    Description: "ID of Security Group for AZ2 Private Subnet 1"
-    Value: !GetAtt AZ2Private1SG.GroupId
-
-  AZ2Private2SGId:
-    Condition: CreateFourAdditionalSGs
-    Description: "ID of Security Group for AZ2 Private Subnet 2"
-    Value: !GetAtt AZ2Private2SG.GroupId

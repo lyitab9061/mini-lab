@@ -1,20 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Security Group and Basic Instance creation in Public2 Subnet'
 
-
 Parameters:
+
   UserConfig:
     Type: String
-    Description: "Configuration identifier representing the user's selections from the network stack"
-    Default: !ImportValue "${NetworkStackName}-UserConfiguration"
-
-  VPCId:
-    Type: String
-    Default: !ImportValue "${NetworkStackName}-VPCId"
-
-  PublicSubnet2AZ1Id:
-    Type: String
-    Default: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"
+    Description: Configuration string from the network stack
 
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
@@ -67,6 +58,9 @@ Parameters:
     AllowedPattern: '[a-zA-Z0-9]*'
     ConstraintDescription: must contain only alphanumeric characters.
 
+#Conditions:
+#  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
+#  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 Conditions:
   CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
   CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
@@ -76,7 +70,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -85,7 +79,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -94,7 +88,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
@@ -115,7 +109,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref MyVPC
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
@@ -134,7 +128,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -144,7 +138,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -154,7 +148,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCId
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
@@ -176,7 +170,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref MyVPC
+      VpcId: !ImportValue "${NetworkStackName}-VPCId"
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
@@ -340,7 +334,7 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
-      SubnetId: !Ref PublicSubnet2AZ1Id
+      SubnetId: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"
       SecurityGroupIds:
          - !GetAtt AZ1Public2SG.GroupId
       KeyName: !Ref KeyName

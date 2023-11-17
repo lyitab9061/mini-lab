@@ -1,0 +1,390 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC and Subnet Creation with Dynamic AZ and Subnet Allocation'
+
+Parameters:
+  NumberOfAZs:
+    Type: Number
+    Description: Enter 2 for second Availability Zone
+    Default: 1
+    MinValue: 1
+    MaxValue: 2
+
+  NumberOfPublicSubnetsAZ2:
+    Type: Number
+    Description: >
+      Specifies the number of public subnets to be created in the second Availability Zone (AZ2).
+      This parameter is applicable only if two Availability Zones are selected. If a single Availability Zone is used,
+      this parameter defaults to 2, indicating two public subnets will be created in the first Availability Zone (AZ1).
+      Enter 1 or 2 to define the number of public subnets in AZ2.
+    Default: 2
+    MinValue: 1
+    MaxValue: 2
+
+
+  NumberOfPrivateSubnetsAZ2:
+    Type: Number
+    Description: >
+      Specifies the number of private subnets to be created in the second Availability Zone (AZ2).
+      This parameter is applicable only if two Availability Zones are selected. If a single Availability Zone is used,
+      this parameter defaults to 2, indicating two private subnets will be created in the first Availability Zone (AZ1).
+      Enter 1 or 2 to define the number of private subnets in AZ2.    
+    Default: 2
+    MinValue: 1
+    MaxValue: 2
+
+Mappings:
+  SubnetConfig:
+    AZ1:
+      PublicSubnet1: "10.0.1.0/24"
+      PublicSubnet2: "10.0.2.0/24"
+      PrivateSubnet1: "10.0.3.0/24"
+      PrivateSubnet2: "10.0.4.0/24"
+    AZ2:
+      PublicSubnet1: "10.0.5.0/24"
+      PublicSubnet2: "10.0.6.0/24"
+      PrivateSubnet1: "10.0.7.0/24"
+      PrivateSubnet2: "10.0.8.0/24"
+
+Conditions:
+    # UseAZ1 is true when at least one Availability Zone is selected. This condition always evaluates to true because the minimum NumberOfAZs is 1.
+  UseAZ1: 
+    !Not [!Equals [!Ref NumberOfAZs, 0]]
+ 
+    # UseAZ2 is true when exactly two Availability Zones are selected. This condition controls the creation of resources in the second AZ.
+  UseAZ2: 
+    !Equals [!Ref NumberOfAZs, 2]
+  
+    # UseTwoPublicSubnets is true when the user chooses to create two public subnets in each Availability Zone.
+  UseTwoPublicSubnets: 
+    !Equals [!Ref NumberOfPublicSubnetsAZ2, 2]
+
+    # UseTwoPrivateSubnets is true when the user opts for two private subnets in each Availability Zone.
+  UseTwoPrivateSubnets: 
+    !Equals [!Ref NumberOfPrivateSubnetsAZ2, 2]
+  UseAZ2AndUseTwoPublicSubnets:
+    Fn::And:
+     - Condition: UseAZ2
+     - Condition: UseTwoPublicSubnets
+  UseAZ2AndUseTwoPrivateSubnets:
+    Fn::And:
+     - Condition: UseAZ2
+     - Condition: UseTwoPrivateSubnets
+Resources:
+ # Create VPC, with CIDR value 16  so that enough IP's available
+  MyLabVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-MyLabVPC" ]]
+# Create Internet Gateway # DependsOn parameter is used here
+  MyLabIGW:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: MyLabVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-MyLabIGW" ]]
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyLabVPC
+      InternetGatewayId: !Ref MyLabIGW
+# Creating an Elastic IP address
+  ElasticIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+     Domain: MyLabVPC
+     Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-ElasticIPAddress" ]]     
+# Creating a NAT Gateway
+  MyNAT:
+   Type: AWS::EC2::NatGateway
+   Properties:
+     AllocationId: !GetAtt ElasticIPAddress.AllocationId
+     SubnetId: !Ref PublicSubnet1AZ1
+     Tags:
+     - Key: Name
+       Value: !Sub MyNAT-${AWS::StackName}
+  # Public Subnets AZ1
+  PublicSubnet1AZ1:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: UseAZ1
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PublicSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet1AZ1" ]]
+
+  PublicSubnet2AZ1:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ1, UseTwoPublicSubnets] #Checking Use single AZ and two PublicSubnets are selected]
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PublicSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet2AZ1"]]
+   # Public Subnets AZ2
+  PublicSubnet1AZ2:
+    Type: 'AWS::EC2::Subnet'
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PublicSubnet1]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet1AZ2" ]]
+
+  PublicSubnet2AZ2:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ2, UseTwoPublicSubnets] #Checking Use two AZ and two Public Subnets are selected]
+    Condition: UseAZ2AndUseTwoPublicSubnets 
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PublicSubnet2]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet2AZ2"]]
+
+  # Private Subnets AZ1
+  PrivateSubnet1AZ1:
+    Type: 'AWS::EC2::Subnet'
+   # Condition: UseAZ1
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PrivateSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet1AZ1"]]
+
+  PrivateSubnet2AZ1:
+    Type: 'AWS::EC2::Subnet'
+   # Condition: !And [UseAZ1, UseTwoPrivateSubnets] #Checking Use single AZ and two Private Subnets are selected]
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PrivateSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet2AZ1"]]
+  # Private Subnets AZ2
+  PrivateSubnet1AZ2:
+    Type: 'AWS::EC2::Subnet'
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PrivateSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet1AZ2"]]
+
+  PrivateSubnet2AZ2:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ2, UseTwoPrivateSubnets] #Checking Use two AZ and two Private Subnets are selected]
+    Condition: UseAZ2AndUseTwoPrivateSubnets
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PrivateSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet2AZ2"]]
+# Public Routing Table for AZ1 and AZ2:
+  PublicRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PublicRouteTableAZ1" ]]
+
+  PublicRouteTableAZ2:
+    Type: AWS::EC2::RouteTable
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PublicRouteTableAZ2" ]]
+
+# Private Routing Table for AZ1 and AZ2:
+  PrivateRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PrivateRouteTableAZ1" ]]
+
+  PrivateRouteTableAZ2:
+    Type: AWS::EC2::RouteTable
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PrivateRouteTableAZ2" ]]
+# Routes for Internet Gateway for each AZ1 and Az2
+  PublicRouteAZ1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyLabIGW
+
+  PublicRouteAZ2:
+    Type: AWS::EC2::Route
+    Condition: UseAZ2   # Only creates if AZ2 is selected.
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyLabIGW
+
+# Routes for NAT Gateway for each AZ1 and AZ2
+  PrivateRouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MyNAT
+
+  PrivateRouteAZ2:
+    Type: AWS::EC2::Route
+    Condition: UseAZ2   # Only creates if AZ2 is selected.
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MyNAT
+       
+ # Associating Route Tables to Public Subnets in AZ1 and AZ2
+  PublicSubnet1RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1AZ1
+      RouteTableId: !Ref PublicRouteTableAZ1
+  PublicSubnet2RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ1, UseTwoPublicSubnets]
+    Properties:
+      SubnetId: !Ref PublicSubnet2AZ1
+      RouteTableId: !Ref PublicRouteTableAZ1
+  PublicSubnet1RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseAZ2
+    Properties:
+      SubnetId: !Ref PublicSubnet1AZ2
+      RouteTableId: !Ref PublicRouteTableAZ2
+  PublicSubnet2RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ2, UseTwoPublicSubnets]
+    Condition: UseAZ2AndUseTwoPublicSubnets
+    Properties:
+      SubnetId: !Ref PublicSubnet2AZ2
+      RouteTableId: !Ref PublicRouteTableAZ2
+
+ # Associating Route Tables to Public Subnets in AZ1 and AZ2
+  PrivateSubnet1RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1AZ1
+      RouteTableId: !Ref PrivateRouteTableAZ1
+  PrivateSubnet2RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ1, UseTwoPrivateSubnets]
+    Properties:
+      SubnetId: !Ref PrivateSubnet2AZ1
+      RouteTableId: !Ref PrivateRouteTableAZ1
+  PrivateSubnet1RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseAZ2
+    Properties:
+      SubnetId: !Ref PrivateSubnet1AZ2
+      RouteTableId: !Ref PrivateRouteTableAZ2
+  PrivateSubnet2RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ2, UseTwoPrivateSubnets]
+    Condition: UseAZ2AndUseTwoPrivateSubnets
+    Properties:
+      SubnetId: !Ref PrivateSubnet2AZ2
+      RouteTableId: !Ref PrivateRouteTableAZ2
+
+Outputs:
+  UserConfiguration:
+    Description: "Configuration identifier representing the user's selections in this stack. It indicates the number of Availability Zones used and the number of public and private subnets in each AZ. This identifier is used by subsequent stacks to determine the appropriate resource creation based on the network configuration established here. Format: 'AZ{NumberOfAZs}P{NumberOfPublicSubnets}P{NumberOfPrivateSubnets}', e.g., 'AZ2P2P2' for two AZs, each with two public and two private subnets."
+    Value: !Sub 
+      - "AZ${NumberOfAZs}P${NumberOfPublicSubnetsAZ2}P${NumberOfPrivateSubnetsAZ2}"
+      - NumberOfAZs: !Ref NumberOfAZs
+        NumberOfPublicSubnets: !Ref NumberOfPublicSubnetsAZ2
+        NumberOfPrivateSubnets: !Ref NumberOfPrivateSubnetsAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-UserConfiguration" 
+
+  VPCId:
+    Description: "ID of the newly created VPC"
+    Value: !Ref MyLabVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPCId"
+
+  PublicSubnet1AZ1Id:
+    Description: "ID of Public Subnet 1 in AZ1"
+    Value: !Ref PublicSubnet1AZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet1AZ1Id"
+
+  PublicSubnet2AZ1Id:
+    Description: "ID of Public Subnet 2 in AZ1"
+    Value: !Ref PublicSubnet2AZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet2AZ1Id"
+
+  PublicSubnet1AZ2Id:
+    Description: "ID of Public Subnet 1 in AZ2"
+    Value: !Ref PublicSubnet1AZ2
+    Condition: UseAZ2
+
+  PublicSubnet2AZ2Id:
+    Description: "ID of Public Subnet 2 in AZ2"
+    Value: !Ref PublicSubnet2AZ2
+    Condition: UseAZ2AndUseTwoPublicSubnets
+
+  PrivateSubnet1AZ1Id:
+    Description: "ID of Public Subnet 1 in AZ1"
+    Value: !Ref PrivateSubnet1AZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1AZ1Id"
+
+  PrivateSubnet2AZ1Id:
+    Description: "ID of Public Subnet 2 in AZ1"
+    Value: !Ref PrivateSubnet2AZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2AZ1Id"
+
+  PrivateSubnet1AZ2Id:
+    Description: "ID of Private Subnet 1 in AZ2"
+    Value: !Ref PrivateSubnet1AZ2
+    Condition: UseAZ2
+
+  PrivateSubnet2AZ2Id:
+    Description: "ID of Private Subnet 2 in AZ2"
+    Value: !Ref PrivateSubnet2AZ2
+    Condition: UseAZ2AndUseTwoPrivateSubnets
+
+ 
