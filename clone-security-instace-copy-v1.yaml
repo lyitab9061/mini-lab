@@ -3,9 +3,26 @@ Description: 'Security Group and Basic Instance creation in Public2 Subnet'
 
 Parameters:
 
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
   UserConfig:
     Type: String
-    Description: Configuration string from the network stack
+    Description: "Configuration string from the network stack"
+  
+  VPCID:
+    Type: String
+    Description: "The ID of the VPC created in the network stack."
+  
+  PublicRouteTableAZ1Id:
+    Type: String
+    Description: " Enter The ID of Public Route Table AZ1 created in the network stack."
 
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
@@ -16,15 +33,6 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2  
   
-  SSHLocation:
-    Description: The IP address range that can be used to SSH to the EC2 instances
-    Type: String
-    MinLength: '9'
-    MaxLength: '18'
-    Default: 0.0.0.0/0
-    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
-    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
-
   DBName:
     Default: wordpressdb
     Description: The WordPress database name
@@ -40,7 +48,7 @@ Parameters:
     MinLength: '1'
     MaxLength: '16'
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
-    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+    ConstraintDescription: "must begin with a letter and contain only alphanumeric characters."
   DBPassword:
     NoEcho: 'true'
     Description: The WordPress database admin account password
@@ -56,79 +64,133 @@ Parameters:
     MinLength: '8'
     MaxLength: '41'
     AllowedPattern: '[a-zA-Z0-9]*'
-    ConstraintDescription: must contain only alphanumeric characters.
+    ConstraintDescription: "must contain only alphanumeric characters."
 
 #Conditions:
 #  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
 #  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 Conditions:
-  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
-  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
+  CreateTwoAdditionalSGs: 
+    !Equals [!Ref UserConfig, "AZ2P1P1"]
+  CreateFourAdditionalSGs: 
+    !Equals [!Ref UserConfig, "AZ2P2P2"]
 
 Resources:
   AZ1Public1SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
+      VpcId: !Ref VPCID
       # No SSH ingress rule needed
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public1SG" ]]
+
   AZ1Public2SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
-      # Currently no specific ingress and egress rules as needed
+      VpcId: !Ref VPCID
+     # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public2SG" ]]
+
   AZ1Private1SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Private2SG
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref AZ1Private2SG
+      VpcId: !Ref VPCID
       Tags:
         - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]]
+          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]] 
+
   AZ1Private2SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ1Private1SG
+      VpcId: !Ref VPCID
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private2SG" ]]
+# Ingress rules AZ1======================================================================================
+# Ingress rules for AZ1Private1SG
+  AZ1Private1SGIngress22FromAZ1Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ1Public1SG
 
+  AZ1Private1SGIngress22FromAZ1Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ1Private2SG
+
+  AZ1Private1SGIngress3306FromAZ1Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private1SG
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref AZ1Private2SG
+
+  # Ingress rules for AZ1Private2SG
+  AZ1Private2SGIngress22FromAZ1Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ1Public1SG
+
+  AZ1Private2SGIngress22FromAZ1Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ1Private1SG
+
+  AZ1Private2SGIngress3306FromAZ1Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ1Private2SG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref AZ1Private1SG
 # Conditional security groups for AZ2
+
+  AZ2Private1SG:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateTwoAdditionalSGs
+    Properties:
+      GroupDescription: "Security group for Private Subnet 1 - Database"
+      VpcId: !Ref VPCID
+
+  AZ2Private2SG:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateFourAdditionalSGs
+    Properties:
+      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
+      VpcId: !Ref VPCID
+
   AZ2Public1SG:
     Type: AWS::EC2::SecurityGroup
+    Condition: CreateTwoAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
+      VpcId: !Ref VPCID   
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -136,53 +198,111 @@ Resources:
 
   AZ2Public2SG:
     Type: AWS::EC2::SecurityGroup
+    Condition: CreateFourAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
+      VpcId: !Ref VPCID
       # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Public2SG" ]]
 
-  AZ2Private1SG:
-    Type: AWS::EC2::SecurityGroup
+# Ingress rules AZ2======================================================================================
+# Ingress rules for AZ2Private1SG
+  AZ2Private1SGIngress22FromAZ2Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
     Properties:
-      GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Private2SG
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref AZ2Private2SG
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Private1SG" ]]
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Public1SG
 
-  AZ2Private2SG:
-    Type: AWS::EC2::SecurityGroup
+  AZ2Private1SGIngress22FromAZ2Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
     Properties:
-      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !ImportValue "${NetworkStackName}-VPCId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Public1SG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref AZ2Private1SG
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Private2SG
+
+  AZ2Private1SGIngress3306FromAZ2Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
+    Properties:
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref AZ2Private2SG
+  # Ingress rules for AZ2Private2SG 
+  AZ2Private2SGIngress22FromAZ2Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Public1SG
+
+  AZ2Private2SGIngress22FromAZ2Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Private1SG
+
+  AZ2Private2SGIngress3306FromAZ2Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateFourAdditionalSGs
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref AZ2Private1SG
+
+##########################################################################
+
+  PublicAdminSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPCID
+      CidrBlock: 10.0.50.0/24
+      MapPublicIpOnLaunch: true  # Ensures that instances receive a public IP
       Tags:
         - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Private2SG" ]]
+          Value: !Sub "${AWS::StackName}-PublicAdminSubnet"
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicAdminSubnet
+      RouteTableId: !Ref PublicRouteTableAZ1Id
+
+  AdminServerGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Enable HTTP access via port 80 + SSH access"
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 80
+        IpProtocol: tcp
+        ToPort: 80
+      - CidrIp: !Ref SSHLocation
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-AdminServerGroup"
 
  #Basic Server instance creating for this lab is a wordpress server, the same Instance's AMI ID will be used to create the DB
   WebServer:
@@ -334,9 +454,9 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
-      SubnetId: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"
+      SubnetId: !Ref PublicAdminSubnet
       SecurityGroupIds:
-         - !GetAtt AZ1Public2SG.GroupId
+         - !GetAtt AdminServerGroup.GroupId
       KeyName: !Ref KeyName
       UserData:
         Fn::Base64: !Sub |
@@ -397,7 +517,7 @@ Resources:
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {'AMIId': ami_id})
               except Exception as e:
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Data': str(e)})
-    Description: Creating custom image of webserver
+    Description: Creating custom image of WebServer
     DependsOn: LambdaExecutionRole
   #This parameter stores the ID of the Amazon Machine Image (AMI) created by the Lambda function for deploying EC2 instances.
   AmiIdParameter:
@@ -417,6 +537,7 @@ Resources:
             Principal:
               Service: 'lambda.amazonaws.com'
             Action: 'sts:AssumeRole'
+    
       Policies:
         - PolicyName: 'root'
           PolicyDocument:
@@ -427,12 +548,13 @@ Resources:
                   - 'ec2:CreateImage'
                   - 'ssm:PutParameter'
                 Resource: '*'
+    DependsOn: WebServer
   # Custom Resource to trigger Lambda
   AMICreationCustomResource:
     Type: 'Custom::AMIcreation'
     Properties:
       ServiceToken: !GetAtt AMICreationLambdaFunction.Arn
-    DependsOn: WebServer
+    DependsOn: LambdaExecutionRole
 
 Outputs:
 
@@ -474,21 +596,23 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-AZ1Private2SGId"
   AZ2Public1SGId:
-    Condition: CreateTwoAdditionalSGs
     Description: "ID of Security Group for AZ2 Public Subnet 1"
-    Value: !GetAtt AZ2Public1SG.GroupId
+    Value: !Ref AZ2Public1SG
+    Condition: CreateTwoAdditionalSGs
 
   AZ2Public2SGId:
-    Condition: CreateFourAdditionalSGs
     Description: "ID of Security Group for AZ2 Public Subnet 2"
-    Value: !GetAtt AZ2Public2SG.GroupId
+    Value: !Ref AZ2Public2SG
+    Condition: CreateFourAdditionalSGs
+
 
   AZ2Private1SGId:
-    Condition: CreateTwoAdditionalSGs
     Description: "ID of Security Group for AZ2 Private Subnet 1"
-    Value: !GetAtt AZ2Private1SG.GroupId
+    Value: !Ref AZ2Private1SG
+    Condition: CreateTwoAdditionalSGs
+
 
   AZ2Private2SGId:
-    Condition: CreateFourAdditionalSGs
     Description: "ID of Security Group for AZ2 Private Subnet 2"
-    Value: !GetAtt AZ2Private2SG.GroupId
+    Value: !Ref AZ2Private2SG
+    Condition: CreateFourAdditionalSGs

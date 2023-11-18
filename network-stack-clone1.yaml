@@ -354,6 +354,12 @@ Outputs:
     Value: !Ref PublicSubnet2AZ1
     Export:
       Name: !Sub "${AWS::StackName}-PublicSubnet2AZ1Id"
+  PublicRouteTableAZ1Id:
+    Description: "ID of Public Route Table AZ1"
+    Value: !Ref PublicRouteTableAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicRouteTableAZ1Id"
+      
 
   PublicSubnet1AZ2Id:
     Description: "ID of Public Subnet 1 in AZ2"
