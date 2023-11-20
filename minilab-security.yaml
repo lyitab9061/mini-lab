@@ -169,6 +169,14 @@ Resources:
       FromPort: 22
       ToPort: 22
       CidrIp: 10.0.3.0/24
+  AZ1Private2SGEgressAll:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AZ1Private2SG
+      IpProtocol: -1  # -1 represents all protocols
+      FromPort: 0     # For all ports
+      ToPort: 65535   # For all ports
+      CidrIp: 0.0.0.0/0  # Allow to any IP address
 
   AZ1Private1SGEgress:
     Type: AWS::EC2::SecurityGroupEgress
@@ -178,6 +186,15 @@ Resources:
       FromPort: 22
       ToPort: 22
       CidrIp: 10.0.4.0/24
+
+  AZ1Private1SGEgressAll:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AZ1Private1SG
+      IpProtocol: -1  # -1 represents all protocols
+      FromPort: 0     # For all ports
+      ToPort: 65535   # For all ports
+      CidrIp: 0.0.0.0/0  # Allow to any IP address
  
 # Ingress rules for AZ1Public
 
@@ -193,7 +210,7 @@ Resources:
   AZ1Public2SGIngress22FromAny:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      GroupId: !Ref AZ1Public1SG
+      GroupId: !Ref AZ1Public2SG
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22

@@ -392,6 +392,7 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
+      KeyName: !Ref KeyName
       SubnetId: 
          Fn::ImportValue:
           PublicSubnetAZ1Id    
@@ -808,26 +809,6 @@ Resources:
 # Output trigger
 
 Outputs:
-
-  WebsiteURL1:
-    Value: !Join 
-      - ''
-      - - 'http://'
-        - !GetAtt 
-          - EC2DB
-          - PublicDnsName
-        - /wordpress
-    Description: WordPress Website
-
-  WebsiteURL2:
-    Value: !Join 
-      - ''
-      - - 'http://'
-        - !GetAtt 
-          - BESR
-          - PublicDnsName
-        - /wordpress
-    Description: WordPress Website    
 
   WebsiteURL3:
     Value: !Join 
