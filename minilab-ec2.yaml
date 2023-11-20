@@ -7,6 +7,18 @@ Parameters:
    Type: String
    Description: "Configuration string from the network stack"
   
+  #VPCID:
+   # Type: String
+    #Description: "The ID of the VPC created in the network stack."
+  
+  PublicSubnet1AZ1Id:
+   Type: String
+   Description: " Enter the 'value' of PublicSubnet1AZ1Id from security stack"
+
+  AZ1Public1SGId:
+   Type: String
+   Description: " Enter the 'value' of AZ1Public1SGId from network stack"
+
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
     Type: 'AWS::EC2::KeyPair::KeyName'
@@ -205,12 +217,10 @@ Resources:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
       KeyName: !Ref KeyName
-      SubnetId: 
-         Fn::ImportValue:
-          PublicSubnet1AZ1Id    
+      SubnetId: !Ref PublicSubnet1AZ1Id
       SecurityGroupIds: 
-         - Fn::ImportValue:
-            !Sub AZ1Public2SGId
+           Fn::ImportValue:
+             !Sub "AZ1Public1SGId.GroupId"
       UserData:
         Fn::Base64: !Sub |
            #!/bin/bash
@@ -253,7 +263,3 @@ Outputs:
           - PublicDnsName
         - /wordpress
     Description: WordPress Website
-
-
-
-
