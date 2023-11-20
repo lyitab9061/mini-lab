@@ -207,10 +207,13 @@ Resources:
       KeyName: !Ref KeyName
       SubnetId: 
          Fn::ImportValue:
-          PublicSubnet1AZ1Id    
+          PrivateSubnet1AZ1Id    
       SecurityGroupIds: 
          - Fn::ImportValue:
-            !Sub AZ1Public2SGId
+            !Sub AAZ1Private1SGId
+      Tags:
+        - Key: "Name"
+          Value: "EC2DB"    
       UserData:
         Fn::Base64: !Sub |
            #!/bin/bash
@@ -240,6 +243,568 @@ Resources:
       ResourceSignal:
         Timeout: PT15M
 
+  JUMP:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.JUMP.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource JUMP '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      SubnetId: 
+         Fn::ImportValue:
+          PublicSubnetAZ1Id    
+      SecurityGroupIds: 
+         - Fn::ImportValue:
+            !Sub AZ1Public1SGId
+      Tags:
+        - Key: "Name"
+          Value: "JUMP"      
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+            # Get the latest CloudFormation helper scripts
+            yum update -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JUMP --configsets wordpress_install --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource JUMP --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  DUMMY:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.DUMMY.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource DUMMY '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: 
+         Fn::ImportValue:
+          PublicSubnetAZ1Id    
+      SecurityGroupIds: 
+         - Fn::ImportValue:
+            !Sub AZ1Public2SGId
+      Tags:
+        - Key: "Name"
+          Value: "DUMMY-Server"    
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+           # Get the latest CloudFormation helper scripts
+           yum update -y aws-cfn-bootstrap
+            
+           # Start cfn-init
+           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DUMMY --configsets wordpress_install --region ${AWS::Region}
+            
+           # cfn-init completed so signal success or not
+           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource DUMMY --region ${AWS::Region}
+
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  BESR:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.BESR.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource BESR '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      SubnetId: 
+         Fn::ImportValue:
+          PrivateSubnet2AZ1Id    
+      SecurityGroupIds: 
+         - Fn::ImportValue:
+            !Sub AAZ1Private2SGId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: "Name"
+          Value: "BESR"      
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+            # Get the latest CloudFormation helper scripts
+            yum update -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource BESR --configsets wordpress_install --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource BESR --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+
 # Output trigger
 
 Outputs:
@@ -254,6 +819,33 @@ Outputs:
         - /wordpress
     Description: WordPress Website
 
+  WebsiteURL2:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - BESR
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website    
 
+  WebsiteURL3:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - JUMP
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website   
 
+  WebsiteURL4:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - DUMMY
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website   
 
