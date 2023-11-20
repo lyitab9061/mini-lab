@@ -819,16 +819,6 @@ Outputs:
         - /wordpress
     Description: WordPress Website
 
-  WebsiteURL2:
-    Value: !Join 
-      - ''
-      - - 'http://'
-        - !GetAtt 
-          - BESR
-          - PublicDnsName
-        - /wordpress
-    Description: WordPress Website    
-
   WebsiteURL3:
     Value: !Join 
       - ''
