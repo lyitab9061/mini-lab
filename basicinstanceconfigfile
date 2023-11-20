@@ -459,7 +459,7 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-AMIID"
 
-      
+
   UserConfig:
     Type: String
     Description: "Configuration identifier representing the user's selections from the network stack"
@@ -471,4 +471,123 @@ Outputs:
 
   PublicSubnet2AZ1Id:
     Type: String
-    Default: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"
+    Default: !ImportValue "${NetworkStackName}-PublicSubnet2AZ1Id"######
+    ##############################################
+
+      AZ2Private1SGIngress22FromAZ2Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Public1SG
+
+    AZ2Private1SGIngress22FromAZ2Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Private2SG
+
+    AZ2Private1SGIngress3306FromAZ2Private2SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private1SG
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref AZ2Private2SG
+
+    # Ingress rules for AZ2Private2SG
+    AZ2Private2SGIngress22FromAZ2Public1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Public1SG
+
+    AZ2Private2SGIngress22FromAZ2Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref AZ2Private1SG
+
+    AZ2Private2SGIngress3306FromAZ2Private1SG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AZ2Private2SG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref AZ2Private1SG
+
+    ####################################################################
+
+
+    # Ingress rules for AZ1Private1SG
+AZ1Private1SGIngress22FromAZ1Public1SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private1SG
+    IpProtocol: tcp
+    FromPort: 22
+    ToPort: 22
+    SourceSecurityGroupId: !Ref AZ1Public1SG
+
+AZ1Private1SGIngress22FromAZ1Private2SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private1SG
+    IpProtocol: tcp
+    FromPort: 22
+    ToPort: 22
+    SourceSecurityGroupId: !Ref AZ1Private2SG
+
+AZ1Private1SGIngress3306FromAZ1Private2SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private1SG
+    IpProtocol: tcp
+    FromPort: 3306
+    ToPort: 3306
+    SourceSecurityGroupId: !Ref AZ1Private2SG
+
+# Ingress rules for AZ1Private2SG
+AZ1Private2SGIngress22FromAZ1Public1SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private2SG
+    IpProtocol: tcp
+    FromPort: 22
+    ToPort: 22
+    SourceSecurityGroupId: !Ref AZ1Public1SG
+
+AZ1Private2SGIngress22FromAZ1Private1SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private2SG
+    IpProtocol: tcp
+    FromPort: 22
+    ToPort: 22
+    SourceSecurityGroupId: !Ref AZ1Private1SG
+
+AZ1Private2SGIngress3306FromAZ1Private1SG:
+  Type: AWS::EC2::SecurityGroupIngress
+  Properties:
+    GroupId: !Ref AZ1Private2SG
+    IpProtocol: tcp
+    FromPort: 80
+    ToPort: 80
+    SourceSecurityGroupId: !Ref AZ1Private1SG
+
+
+#######################################################################################
+

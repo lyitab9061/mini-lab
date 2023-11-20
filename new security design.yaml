@@ -3,10 +3,6 @@ Description: 'Security Group and Basic Instance creation in Public2 Subnet'
 
 Parameters:
 
-  UserConfig:
-   Type: String
-   Description: "Configuration string from the network stack"
-  
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
     Type: 'AWS::EC2::KeyPair::KeyName'
@@ -15,7 +11,11 @@ Parameters:
   ImageId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2  
-  
+
+  UserConfig:
+   Type: String
+   Description: "Configuration string from the network stack"
+
   DBName:
     Default: wordpressdb
     Description: The WordPress database name
@@ -24,19 +24,366 @@ Parameters:
     MaxLength: '64'
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUser:
+    NoEcho: 'true'
+    Description: The WordPress database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: The WordPress database admin account password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  DBRootPassword:
+    NoEcho: 'true'
+    Description: MySQL root password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  NumberOfAZs:
+    Type: Number
+    Description: Enter 2 for second Availability Zone
+    Default: 1
+    MinValue: 1
+    MaxValue: 2
+
+  NumberOfPublicSubnetsAZ2:
+    Type: Number
+    Description: >
+      Specifies the number of public subnets to be created in the second Availability Zone (AZ2).
+      This parameter is applicable only if two Availability Zones are selected. If a single Availability Zone is used,
+      this parameter defaults to 2, indicating two public subnets will be created in the first Availability Zone (AZ1).
+      Enter 1 or 2 to define the number of public subnets in AZ2.
+    Default: 2
+    MinValue: 1
+    MaxValue: 2
+
+
+  NumberOfPrivateSubnetsAZ2:
+    Type: Number
+    Description: >
+      Specifies the number of private subnets to be created in the second Availability Zone (AZ2).
+      This parameter is applicable only if two Availability Zones are selected. If a single Availability Zone is used,
+      this parameter defaults to 2, indicating two private subnets will be created in the first Availability Zone (AZ1).
+      Enter 1 or 2 to define the number of private subnets in AZ2.    
+    Default: 2
+    MinValue: 1
+    MaxValue: 2
+
 
 Conditions:
   CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
   CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 
+    # UseAZ1 is true when at least one Availability Zone is selected. This condition always evaluates to true because the minimum NumberOfAZs is 1.
+  UseAZ1: 
+    !Not [!Equals [!Ref NumberOfAZs, 0]]
+ 
+    # UseAZ2 is true when exactly two Availability Zones are selected. This condition controls the creation of resources in the second AZ.
+  UseAZ2: 
+    !Equals [!Ref NumberOfAZs, 2]
+  
+    # UseTwoPublicSubnets is true when the user chooses to create two public subnets in each Availability Zone.
+  UseTwoPublicSubnets: 
+    !Equals [!Ref NumberOfPublicSubnetsAZ2, 2]
+
+    # UseTwoPrivateSubnets is true when the user opts for two private subnets in each Availability Zone.
+  UseTwoPrivateSubnets: 
+    !Equals [!Ref NumberOfPrivateSubnetsAZ2, 2]
+  UseAZ2AndUseTwoPublicSubnets:
+    Fn::And:
+     - Condition: UseAZ2
+     - Condition: UseTwoPublicSubnets
+  UseAZ2AndUseTwoPrivateSubnets:
+    Fn::And:
+     - Condition: UseAZ2
+     - Condition: UseTwoPrivateSubnets
+
+Mappings:
+  SubnetConfig:
+    AZ1:
+      PublicSubnet1: "10.0.1.0/24"
+      PublicSubnet2: "10.0.2.0/24"
+      PrivateSubnet1: "10.0.3.0/24"
+      PrivateSubnet2: "10.0.4.0/24"
+    AZ2:
+      PublicSubnet1: "10.0.5.0/24"
+      PublicSubnet2: "10.0.6.0/24"
+      PrivateSubnet1: "10.0.7.0/24"
+      PrivateSubnet2: "10.0.8.0/24"
+
 Resources:
+ # Create VPC, with CIDR value 16  so that enough IP's available
+  MyLabVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-MyLabVPC" ]]
+ # Create Internet Gateway # DependsOn parameter is used here
+  MyLabIGW:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: MyLabVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-MyLabIGW" ]]
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyLabVPC
+      InternetGatewayId: !Ref MyLabIGW
+ # Creating an Elastic IP address
+  ElasticIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+     Domain: MyLabVPC
+     Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-ElasticIPAddress" ]]     
+ # Creating a NAT Gateway
+  MyNAT:
+   Type: AWS::EC2::NatGateway
+   Properties:
+     AllocationId: !GetAtt ElasticIPAddress.AllocationId
+     SubnetId: !Ref PublicSubnet1AZ1
+     Tags:
+     - Key: Name
+       Value: !Sub MyNAT-${AWS::StackName}
+  # Public Subnets AZ1
+  PublicSubnet1AZ1:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: UseAZ1
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PublicSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet1AZ1" ]]
+
+  PublicSubnet2AZ1:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ1, UseTwoPublicSubnets] #Checking Use single AZ and two PublicSubnets are selected]
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PublicSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet2AZ1"]]
+   # Public Subnets AZ2
+  PublicSubnet1AZ2:
+    Type: 'AWS::EC2::Subnet'
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PublicSubnet1]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet1AZ2" ]]
+
+  PublicSubnet2AZ2:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ2, UseTwoPublicSubnets] #Checking Use two AZ and two Public Subnets are selected]
+    Condition: UseAZ2AndUseTwoPublicSubnets 
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PublicSubnet2]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PublicSubnet2AZ2"]]
+
+  # Private Subnets AZ1
+  PrivateSubnet1AZ1:
+    Type: 'AWS::EC2::Subnet'
+   # Condition: UseAZ1
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PrivateSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet1AZ1"]]
+
+  PrivateSubnet2AZ1:
+    Type: 'AWS::EC2::Subnet'
+   # Condition: !And [UseAZ1, UseTwoPrivateSubnets] #Checking Use single AZ and two Private Subnets are selected]
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ1, PrivateSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet2AZ1"]]
+  # Private Subnets AZ2
+  PrivateSubnet1AZ2:
+    Type: 'AWS::EC2::Subnet'
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PrivateSubnet1]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet1AZ2"]]
+
+  PrivateSubnet2AZ2:
+    Type: 'AWS::EC2::Subnet'
+    #Condition: !And [UseAZ2, UseTwoPrivateSubnets] #Checking Use two AZ and two Private Subnets are selected]
+    Condition: UseAZ2AndUseTwoPrivateSubnets
+    Properties:
+      VpcId: !Ref MyLabVPC
+      CidrBlock: !FindInMap [SubnetConfig, AZ2, PrivateSubnet2]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Join ['', [!Ref "AWS::StackName", "-PrivateSubnet2AZ2"]]
+# Public Routing Table for AZ1 and AZ2:
+  PublicRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PublicRouteTableAZ1" ]]
+
+  PublicRouteTableAZ2:
+    Type: AWS::EC2::RouteTable
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PublicRouteTableAZ2" ]]
+
+# Private Routing Table for AZ1 and AZ2:
+  PrivateRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PrivateRouteTableAZ1" ]]
+
+  PrivateRouteTableAZ2:
+    Type: AWS::EC2::RouteTable
+    Condition: UseAZ2
+    Properties:
+      VpcId: !Ref MyLabVPC
+      Tags:
+        - Key: Name
+          Value:  !Join ['', [!Ref "AWS::StackName", "-PrivateRouteTableAZ2" ]]
+# Routes for Internet Gateway for each AZ1 and Az2
+  PublicRouteAZ1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyLabIGW
+
+  PublicRouteAZ2:
+    Type: AWS::EC2::Route
+    Condition: UseAZ2   # Only creates if AZ2 is selected.
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyLabIGW
+
+# Routes for NAT Gateway for each AZ1 and AZ2
+  PrivateRouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MyNAT
+
+  PrivateRouteAZ2:
+    Type: AWS::EC2::Route
+    Condition: UseAZ2   # Only creates if AZ2 is selected.
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref MyNAT
+       
+ # Associating Route Tables to Public Subnets in AZ1 and AZ2
+  PublicSubnet1RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1AZ1
+      RouteTableId: !Ref PublicRouteTableAZ1
+  PublicSubnet2RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ1, UseTwoPublicSubnets]
+    Properties:
+      SubnetId: !Ref PublicSubnet2AZ1
+      RouteTableId: !Ref PublicRouteTableAZ1
+  PublicSubnet1RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseAZ2
+    Properties:
+      SubnetId: !Ref PublicSubnet1AZ2
+      RouteTableId: !Ref PublicRouteTableAZ2
+  PublicSubnet2RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ2, UseTwoPublicSubnets]
+    Condition: UseAZ2AndUseTwoPublicSubnets
+    Properties:
+      SubnetId: !Ref PublicSubnet2AZ2
+      RouteTableId: !Ref PublicRouteTableAZ2
+
+ # Associating Route Tables to Public Subnets in AZ1 and AZ2
+  PrivateSubnet1RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1AZ1
+      RouteTableId: !Ref PrivateRouteTableAZ1
+  PrivateSubnet2RouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ1, UseTwoPublicSubnets]
+    Properties:
+      SubnetId: !Ref PrivateSubnet2AZ1
+      RouteTableId: !Ref PrivateRouteTableAZ1
+  PrivateSubnet1RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UseAZ2
+    Properties:
+      SubnetId: !Ref PrivateSubnet1AZ2
+      RouteTableId: !Ref PrivateRouteTableAZ2
+  PrivateSubnet2RouteTableAssociationAZ2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    #Condition: !And [UseAZ2, UseTwoPrivateSubnets]
+    Condition: UseAZ2AndUseTwoPrivateSubnets
+    Properties:
+      SubnetId: !Ref PrivateSubnet2AZ2
+      RouteTableId: !Ref PrivateRouteTableAZ2
+
+##############################################################################################################
   AZ1Public1SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
           
       # No SSH ingress rule needed
       Tags:
@@ -47,9 +394,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
      # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -59,9 +404,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]] 
@@ -70,9 +413,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private2SG" ]]
@@ -159,9 +500,7 @@ Resources:
     Condition: CreateTwoAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -172,9 +511,7 @@ Resources:
     Condition: CreateFourAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
+      VpcId: !Ref MyLabVPC
       # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -241,7 +578,548 @@ Resources:
       FromPort: 80
       ToPort: 80
       SourceSecurityGroupId: !Ref AZ2Private1SG
+  DBServer:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
 
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.DBServer.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource DBServer '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      SubnetId: !Ref PrivateSubnet1AZ1
+      SecurityGroupIds:
+         - !GetAtt AZ1Private1SG.GroupId
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+            # Get the latest CloudFormation helper scripts
+            yum update -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource DBServer --configsets wordpress_install --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource DBServer --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  BEServer:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.BEServer.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource BEServer '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      SubnetId: !Ref PrivateSubnet2AZ1
+      SecurityGroupIds:
+         - !GetAtt AZ1Private2SG.GroupId
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+            # Get the latest CloudFormation helper scripts
+            yum update -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource BEServer --configsets wordpress_install --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource BEServer --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  JUMP:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          wordpress_install:
+            - install_cfn
+            - install_wordpress
+            - configure_wordpress
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.BEServer.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource BEServer '
+                  - '         --configsets wordpress_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_wordpress:
+          sources:
+            /var/www/html: 'http://wordpress.org/latest.tar.gz'
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - 'CREATE DATABASE '
+                  - !Ref DBName
+                  - |
+                    ;
+                  - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/create-wp-config:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -xe
+                  - >
+                    cp /var/www/html/wordpress/wp-config-sample.php
+                    /var/www/html/wordpress/wp-config.php
+                  - sed -i "s/'database_name_here'/'
+                  - !Ref DBName
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'username_here'/'
+                  - !Ref DBUser
+                  - |
+                    '/g" wp-config.php
+                  - sed -i "s/'password_here'/'
+                  - !Ref DBPassword
+                  - |
+                    '/g" wp-config.php
+              mode: '000500'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              mariadb:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_wordpress:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -uroot password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -uroot --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -uroot --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_configure_wordpress:
+              command: /tmp/create-wp-config
+              cwd: /var/www/html/wordpress
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet1AZ1
+      SecurityGroupIds:
+         - !GetAtt AZ1Public1SG.GroupId
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash
+           yum update -y
+           amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+           yum install -y httpd mariadb-server MariaDB-client
+           systemctl start httpd
+           systemctl enable httpd
+           usermod -a -G apache ec2-user
+           chown -R ec2-user:apache /var/www
+           chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} \;
+           find /var/www -type f -exec sudo chmod 0664 {} \;
+           echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+                       
+            # Get the latest CloudFormation helper scripts
+            yum update -y aws-cfn-bootstrap
+            
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JUMP --configsets wordpress_install --region ${AWS::Region}
+            
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource JUMP --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
 ##########################################################################
 
 Outputs:
@@ -289,3 +1167,33 @@ Outputs:
     Description: "ID of Security Group for AZ2 Private Subnet 2"
     Value: !Ref AZ2Private2SG
     Condition: CreateFourAdditionalSGs
+  
+  WebsiteURL:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - DBServer
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website    
+
+  WebsiteURL2:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - BEServer
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website    
+
+  WebsiteURL3:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - JUMP
+          - PublicDnsName
+        - /wordpress
+    Description: WordPress Website   

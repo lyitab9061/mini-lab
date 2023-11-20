@@ -3,15 +3,6 @@ Description: 'Security Group and Basic Instance creation in Public2 Subnet'
 
 Parameters:
 
-  SSHLocation:
-    Description: The IP address range that can be used to SSH to the EC2 instances
-    Type: String
-    MinLength: '9'
-    MaxLength: '18'
-    Default: 0.0.0.0/0
-    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
-    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
-
   UserConfig:
    Type: String
    Description: "Configuration string from the network stack"
@@ -20,9 +11,13 @@ Parameters:
    # Type: String
     #Description: "The ID of the VPC created in the network stack."
   
-  NetworkStackNameParameter:
+  PublicSubnet1AZ1Id:
    Type: String
-   Description: " Enter The Route table ID from network stack."
+   Description: " Enter the 'value' of PublicSubnet1AZ1Id from security stack"
+
+  AZ1Public1SGId:
+   Type: String
+   Description: " Enter the 'value' of AZ1Public1SGId from network stack"
 
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
@@ -71,262 +66,8 @@ Conditions:
   CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 
 Resources:
-  AZ1Public1SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-          
-      # No SSH ingress rule needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public1SG" ]]
-
-  AZ1Public2SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-     # Currently no specific ingress and egress rules as needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Public2SG" ]]
-
-  AZ1Private1SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]] 
-
-  AZ1Private2SG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private2SG" ]]
-# Ingress rules AZ1======================================================================================
-# Ingress rules for AZ1Private1SG
-  AZ1Private1SGIngress22FromAZ1Public1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private1SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ1Public1SG
-
-  AZ1Private1SGIngress22FromAZ1Private2SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private1SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ1Private2SG
-
-  AZ1Private1SGIngress3306FromAZ1Private2SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private1SG
-      IpProtocol: tcp
-      FromPort: 3306
-      ToPort: 3306
-      SourceSecurityGroupId: !Ref AZ1Private2SG
-
-  # Ingress rules for AZ1Private2SG
-  AZ1Private2SGIngress22FromAZ1Public1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private2SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ1Public1SG
-
-  AZ1Private2SGIngress22FromAZ1Private1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private2SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ1Private1SG
-
-  AZ1Private2SGIngress3306FromAZ1Private1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref AZ1Private2SG
-      IpProtocol: tcp
-      FromPort: 80
-      ToPort: 80
-      SourceSecurityGroupId: !Ref AZ1Private1SG
-# Conditional security groups for AZ2
-
-  AZ2Private1SG:
-    Type: AWS::EC2::SecurityGroup
-    Condition: CreateTwoAdditionalSGs
-    Properties:
-      GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-
-  AZ2Private2SG:
-    Type: AWS::EC2::SecurityGroup
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-
-  AZ2Public1SG:
-    Type: AWS::EC2::SecurityGroup
-    Condition: CreateTwoAdditionalSGs
-    Properties:
-      GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      # No SSH ingress rule needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Public1SG" ]]
-
-  AZ2Public2SG:
-    Type: AWS::EC2::SecurityGroup
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      # Currently no specific ingress and egress rules as needed
-      Tags:
-        - Key: Name
-          Value:  !Join ['', [!Ref "AWS::StackName", "-AZ2Public2SG" ]]
-
-# Ingress rules AZ2======================================================================================
-# Ingress rules for AZ2Private1SG
-  AZ2Private1SGIngress22FromAZ2Public1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private1SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ2Public1SG
-
-  AZ2Private1SGIngress22FromAZ2Private2SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private1SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ2Private2SG
-
-  AZ2Private1SGIngress3306FromAZ2Private2SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private1SG
-      IpProtocol: tcp
-      FromPort: 3306
-      ToPort: 3306
-      SourceSecurityGroupId: !Ref AZ2Private2SG
-  # Ingress rules for AZ2Private2SG 
-  AZ2Private2SGIngress22FromAZ2Public1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private2SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ2Public1SG
-
-  AZ2Private2SGIngress22FromAZ2Private1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private2SG
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      SourceSecurityGroupId: !Ref AZ2Private1SG
-
-  AZ2Private2SGIngress3306FromAZ2Private1SG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: CreateFourAdditionalSGs
-    Properties:
-      GroupId: !Ref AZ2Private2SG
-      IpProtocol: tcp
-      FromPort: 80
-      ToPort: 80
-      SourceSecurityGroupId: !Ref AZ2Private1SG
-
-##########################################################################
-
-  PublicAdminSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      CidrBlock: 10.0.50.0/24
-      MapPublicIpOnLaunch: true  # Ensures that instances receive a public IP
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-PublicAdminSubnet"
-  PublicSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicAdminSubnet
-      RouteTableId: !Ref NetworkStackNameParameter
-      
-      #!Ref NetworkStackNameParameter
-
-
-     #       network-stack-PublicRouteTableAZ1Id
-
-  AdminServerGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Enable HTTP access via port 80 + SSH access"
-      VpcId: 
-        Fn::ImportValue:
-          netstackvpc
-      SecurityGroupIngress:
-      - CidrIp: 0.0.0.0/0
-        FromPort: 80
-        IpProtocol: tcp
-        ToPort: 80
-      - CidrIp: !Ref SSHLocation
-        FromPort: 22
-        IpProtocol: tcp
-        ToPort: 22
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-AdminServerGroup"
-
- #Basic Server instance creating for this lab is a wordpress server, the same Instance's AMI ID will be used to create the DB
-  Instance:
+#Basic Server instance creating for Database Server
+  EC2DB:
     Type: 'AWS::EC2::Instance'
     Metadata:
       'AWS::CloudFormation::Init':
@@ -361,11 +102,11 @@ Resources:
                   - |
                     triggers=post.update
                   - |
-                    path=Resources.Instance.Metadata.AWS::CloudFormation::Init
+                    path=Resources.EC2DB.Metadata.AWS::CloudFormation::Init
                   - 'action=/opt/aws/bin/cfn-init -v '
                   - '         --stack '
                   - !Ref 'AWS::StackName'
-                  - '         --resource Instance '
+                  - '         --resource EC2DB '
                   - '         --configsets wordpress_install '
                   - '         --region '
                   - !Ref 'AWS::Region'
@@ -475,10 +216,11 @@ Resources:
     Properties:
       ImageId: !Ref ImageId
       InstanceType: t2.micro
-      SubnetId: !Ref PublicAdminSubnet
-      SecurityGroupIds:
-         - !GetAtt AdminServerGroup.GroupId
       KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet1AZ1Id
+      SecurityGroupIds: 
+           Fn::ImportValue:
+             !Sub "AZ1Public1SGId.GroupId"
       UserData:
         Fn::Base64: !Sub |
            #!/bin/bash
@@ -498,229 +240,30 @@ Resources:
            yum update -y aws-cfn-bootstrap
             
            # Start cfn-init
-           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Instance --configsets wordpress_install --region ${AWS::Region}
+           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2DB --configsets wordpress_install --region ${AWS::Region}
             
            # cfn-init completed so signal success or not
-           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Instance --region ${AWS::Region}
-           #
-           /opt/aws/bin/cfn-signal \
-           -e $? \
-           --stack ${AWS::StackName} \
-           --region ${AWS::Region} \
-           --resource AMICreate
-           shutdown -h now 
+           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2DB --region ${AWS::Region}
+
 
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
-  # Lamda function trigger
-  AMICreate:
-    Type: AWS::CloudFormation::WaitCondition
-    CreationPolicy:
-      ResourceSignal:
-        Timeout: PT10M    
- # Lamda function 
-  AMICreationLambdaFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      VpcConfig:
-        SecurityGroupIds:
-            - !GetAtt AdminServerGroup.GroupId
-        SubnetIds: 
-            - !Ref PublicAdminSubnet
-      Code:
-        ZipFile: !Sub |
-            import logging
-            import cfnresponse
-            import urllib.request
-            import json
-            import boto3
-            from threading import Timer
-            from botocore.exceptions import WaiterError
 
-            logger = logging.getLogger()
-            logger.setLevel(logging.INFO)
-
-            def handler(event, context):
-              def success(data={}):
-                responseData = {'Message': 'Hello {}!'.format(event['ResourceProperties']['Name'])}
-                cfnresponse.send(event, context, cfnresponse.SUCCESS, data, physicalId)
-
-              def failed(e):
-                cfnresponse.send(event, context, cfnresponse.FAILED, str(e), physicalId)
-
-              logger.info('Request received: %s\n' % json.dumps(event))
-
-              try:
-                instanceId = event['ResourceProperties']['Instance']
-                if (not instanceId):
-                  raise 'InstanceID required'
-
-                if not 'RequestType' in event:
-                  success({'Data': 'Unhandled request type'})
-                  return
-                  
-                if event['RequestType'] == 'Delete':
-                  if (not physicalId.startswith('ami-')):
-                    raise 'Unknown PhysicalId: %s' % physicalId
-                  
-                  ec2client = boto3.client('ec2')
-                  images = ec2client.describe_images(ImageIds=[physicalId])
-                  for image in images['Images']:
-                    ec2.Image(image['ImageId']).deregister()
-                    snapshots = ([bdm['Ebs']['SnapshotId'] 
-                                  for bdm in image['BlockDeviceMappings'] 
-                                  if 'Ebs' in bdm and 'SnapshotId' in bdm['Ebs']])
-                    for snapshot in snapshots:
-                      ec2.Snapshot(snapshot).delete()
-
-                  success({'Data': 'OK'})
-                elif event['RequestType'] in set(['Create', 'Update']):
-                  if not physicalId:  # AMI creation has not been requested yet
-                    instance = ec2.Instance(instanceId)
-                    instance.wait_until_stopped()
-
-                    image = instance.create_image(Name="Automatic from CloudFormation stack ${AWS::StackName}")
-
-                    physicalId = image.image_id
-                  else:
-                    logger.info('Continuing in awaiting image available: %s\n' % physicalId)
-
-                  ec2client = boto3.client('ec2')
-                  waiter = ec2client.get_waiter('image_available')
-
-                  try:
-                    waiter.wait(ImageIds=[physicalId], WaiterConfig={'Delay': 30, 'MaxAttempts': 6})
-                  except WaiterError as e:
-                    # Request the same event but set PhysicalResourceId so that the AMI is not created again
-                    event['PhysicalResourceId'] = physicalId
-                    logger.info('Timeout reached, continuing function: %s\n' % json.dumps(event))
-                    lambda_client = boto3.client('lambda')
-                    lambda_client.invoke(FunctionName=context.invoked_function_arn, 
-                                          InvocationType='Event',
-                                          Payload=json.dumps(event))
-                    return
-
-                  success({'Data': 'OK'})
-                else:
-                  success({'Data': 'OK'})
-              except Exception as e:
-                failed(e)
-      Runtime: python3.11
-      Timeout: 300
-    DependsOn: LambdaExecutionRole
-  #This parameter stores the ID of the Amazon Machine Image (AMI) created by the Lambda function for deploying EC2 instances.
-  AmiIdParameter:
-    Type: 'AWS::SSM::Parameter'
-    Properties:
-      Name: 'MyAmiId'
-      Type: 'String'
-      Value: 'pending'  # Initial value, will be updated by Lambda
-  # IAM Role for Lambda
-  LambdaExecutionRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: 'Allow'
-            Principal:
-              Service: 'lambda.amazonaws.com'
-            Action: 'sts:AssumeRole'
-      Path: /
-      ManagedPolicyArns:
-      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
-      - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: 'LambdaExecutionPolicy'
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: 'Allow'
-                Action:
-                  - 'ec2:DescribeInstances'
-                  - 'ec2:DescribeImages'
-                  - 'ec2:CreateImage'
-                  - 'ec2:DeregisterImage'
-                  - 'ec2:DescribeSnapshots'
-                  - 'ec2:DeleteSnapshot'
-                  - 'ssm:PutParameter'
-                Resource: '*'
-              - Effect: 'Allow'
-                Action:
-                  - 'logs:CreateLogGroup'
-                  - 'logs:CreateLogStream'
-                  - 'logs:PutLogEvents'
-                Resource: 'arn:aws:logs:*:*:*'
-
- # Custom Resource to trigger Lambda
-  AMICreationCustomResource:
-    Type: 'Custom::AMIcreation'
-    Properties:
-      ServiceToken: !GetAtt AMICreationLambdaFunction.Arn
-      Instance: !Ref Instance
-    DependsOn: AMICreate
+# Output trigger
 
 Outputs:
 
-  WebsiteURL:
+  WebsiteURL1:
     Value: !Join 
       - ''
       - - 'http://'
         - !GetAtt 
-          - Instance
+          - EC2DB
           - PublicDnsName
         - /wordpress
     Description: WordPress Website
 
-  AMIID:
-    Description: "ID of the AMI created by the Lambda function. Use this ID as a parameter when creating subsequent stacks."
-    Value: !Ref AMICreationCustomResource
-  
-  AZ1Public1SGId:
-    Description: "ID of Security Group for AZ1 Public Subnet 1"
-    Value: !GetAtt AZ1Public1SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Public1SGId"
-
-  AZ1Public2SGId:
-    Description: "ID of Security Group for AZ1 Public Subnet 2"
-    Value: !GetAtt AZ1Public2SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Public2SGId"
-
-  AZ1Private1SGId:
-    Description: "ID of Security Group for AZ1 Private Subnet 1"
-    Value: !GetAtt AZ1Private1SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Private1SGId"
-
-  AZ1Private2SGId:
-    Description: "ID of Security Group for AZ1 Private Subnet 2"
-    Value: !GetAtt AZ1Private2SG.GroupId
-    Export:
-      Name: !Sub "${AWS::StackName}-AZ1Private2SGId"
-  AZ2Public1SGId:
-    Description: "ID of Security Group for AZ2 Public Subnet 1"
-    Value: !Ref AZ2Public1SG
-    Condition: CreateTwoAdditionalSGs
-
-  AZ2Public2SGId:
-    Description: "ID of Security Group for AZ2 Public Subnet 2"
-    Value: !Ref AZ2Public2SG
-    Condition: CreateFourAdditionalSGs
 
 
-  AZ2Private1SGId:
-    Description: "ID of Security Group for AZ2 Private Subnet 1"
-    Value: !Ref AZ2Private1SG
-    Condition: CreateTwoAdditionalSGs
 
-
-  AZ2Private2SGId:
-    Description: "ID of Security Group for AZ2 Private Subnet 2"
-    Value: !Ref AZ2Private2SG
-    Condition: CreateFourAdditionalSGs

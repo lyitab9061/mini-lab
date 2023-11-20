@@ -13,16 +13,16 @@ Parameters:
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
 
   UserConfig:
-    Type: String
-    Description: "Configuration string from the network stack"
+   Type: String
+   Description: "Configuration string from the network stack"
   
-  VPCID:
-    Type: String
-    Description: "The ID of the VPC created in the network stack."
+  #VPCID:
+   # Type: String
+    #Description: "The ID of the VPC created in the network stack."
   
-  PublicRouteTableAZ1Id:
-    Type: String
-    Description: " Enter The ID of Public Route Table AZ1 created in the network stack."
+  NetworkStackNameParameter:
+   Type: String
+   Description: " Enter The Route table ID from network stack."
 
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
@@ -66,21 +66,19 @@ Parameters:
     AllowedPattern: '[a-zA-Z0-9]*'
     ConstraintDescription: "must contain only alphanumeric characters."
 
-#Conditions:
-#  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
-#  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 Conditions:
-  CreateTwoAdditionalSGs: 
-    !Equals [!Ref UserConfig, "AZ2P1P1"]
-  CreateFourAdditionalSGs: 
-    !Equals [!Ref UserConfig, "AZ2P2P2"]
+  CreateTwoAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P1P1"]
+  CreateFourAdditionalSGs: !Equals [!Ref UserConfig, "AZ2P2P2"]
 
 Resources:
   AZ1Public1SG:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
+          
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -90,7 +88,9 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
      # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -100,7 +100,9 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private1SG" ]] 
@@ -109,7 +111,9 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       Tags:
         - Key: Name
           Value:  !Join ['', [!Ref "AWS::StackName", "-AZ1Private2SG" ]]
@@ -176,21 +180,27 @@ Resources:
     Condition: CreateTwoAdditionalSGs
     Properties:
       GroupDescription: "Security group for Private Subnet 1 - Database"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
 
   AZ2Private2SG:
     Type: AWS::EC2::SecurityGroup
     Condition: CreateFourAdditionalSGs
     Properties:
       GroupDescription: "Security group for Private Subnet 2 - Backend Services"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
 
   AZ2Public1SG:
     Type: AWS::EC2::SecurityGroup
     Condition: CreateTwoAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 1 - Jump Server"
-      VpcId: !Ref VPCID   
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       # No SSH ingress rule needed
       Tags:
         - Key: Name
@@ -201,7 +211,9 @@ Resources:
     Condition: CreateFourAdditionalSGs
     Properties:
       GroupDescription: "Security group for Public Subnet 2 - Isolated Server"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       # Currently no specific ingress and egress rules as needed
       Tags:
         - Key: Name
@@ -274,7 +286,9 @@ Resources:
   PublicAdminSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       CidrBlock: 10.0.50.0/24
       MapPublicIpOnLaunch: true  # Ensures that instances receive a public IP
       Tags:
@@ -284,13 +298,20 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicAdminSubnet
-      RouteTableId: !Ref PublicRouteTableAZ1Id
+      RouteTableId: !Ref NetworkStackNameParameter
+      
+      #!Ref NetworkStackNameParameter
+
+
+     #       network-stack-PublicRouteTableAZ1Id
 
   AdminServerGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: "Enable HTTP access via port 80 + SSH access"
-      VpcId: !Ref VPCID
+      VpcId: 
+        Fn::ImportValue:
+          netstackvpc
       SecurityGroupIngress:
       - CidrIp: 0.0.0.0/0
         FromPort: 80
@@ -305,7 +326,7 @@ Resources:
           Value: !Sub "${AWS::StackName}-AdminServerGroup"
 
  #Basic Server instance creating for this lab is a wordpress server, the same Instance's AMI ID will be used to create the DB
-  WebServer:
+  Instance:
     Type: 'AWS::EC2::Instance'
     Metadata:
       'AWS::CloudFormation::Init':
@@ -340,11 +361,11 @@ Resources:
                   - |
                     triggers=post.update
                   - |
-                    path=Resources.WebServer.Metadata.AWS::CloudFormation::Init
+                    path=Resources.Instance.Metadata.AWS::CloudFormation::Init
                   - 'action=/opt/aws/bin/cfn-init -v '
                   - '         --stack '
                   - !Ref 'AWS::StackName'
-                  - '         --resource WebServer '
+                  - '         --resource Instance '
                   - '         --configsets wordpress_install '
                   - '         --region '
                   - !Ref 'AWS::Region'
@@ -473,51 +494,122 @@ Resources:
            find /var/www -type f -exec sudo chmod 0664 {} \;
            echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
                        
-            # Get the latest CloudFormation helper scripts
-            yum update -y aws-cfn-bootstrap
+           # Get the latest CloudFormation helper scripts
+           yum update -y aws-cfn-bootstrap
             
-            # Start cfn-init
-            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServer --configsets wordpress_install --region ${AWS::Region}
+           # Start cfn-init
+           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Instance --configsets wordpress_install --region ${AWS::Region}
             
-            # cfn-init completed so signal success or not
-            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer --region ${AWS::Region}
+           # cfn-init completed so signal success or not
+           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Instance --region ${AWS::Region}
+           #
+           /opt/aws/bin/cfn-signal \
+           -e $? \
+           --stack ${AWS::StackName} \
+           --region ${AWS::Region} \
+           --resource AMICreate
+           shutdown -h now 
 
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
+  # Lamda function trigger
+  AMICreate:
+    Type: AWS::CloudFormation::WaitCondition
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M    
  # Lamda function 
   AMICreationLambdaFunction:
-    Type: 'AWS::Lambda::Function'
+    Type: AWS::Lambda::Function
     Properties:
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.8
+      VpcConfig:
+        SecurityGroupIds:
+            - !GetAtt AdminServerGroup.GroupId
+        SubnetIds: 
+            - !Ref PublicAdminSubnet
       Code:
-        ZipFile: |
-          import boto3
-          import cfnresponse
-          def handler(event, context):
-              ec2 = boto3.client('ec2')
-              ssm = boto3.client('ssm')
+        ZipFile: !Sub |
+            import logging
+            import cfnresponse
+            import urllib.request
+            import json
+            import boto3
+            from threading import Timer
+            from botocore.exceptions import WaiterError
+
+            logger = logging.getLogger()
+            logger.setLevel(logging.INFO)
+
+            def handler(event, context):
+              def success(data={}):
+                responseData = {'Message': 'Hello {}!'.format(event['ResourceProperties']['Name'])}
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, data, physicalId)
+
+              def failed(e):
+                cfnresponse.send(event, context, cfnresponse.FAILED, str(e), physicalId)
+
+              logger.info('Request received: %s\n' % json.dumps(event))
+
               try:
-                  instance_id = event['ResourceProperties']['InstanceId']
-                  ami_response = ec2.create_image(
-                      InstanceId=instance_id,
-                      Name='AutoGeneratedAMI',
-                      NoReboot=True,
-                      Description='AMI generated by Lambda'
-                  )
-                  ami_id = ami_response['ImageId']
-                  ssm.put_parameter(
-                      Name='MyAmiId',  # Ensure this matches the name in your CF template
-                      Value=ami_id,
-                      Overwrite=True,
-                      Type='String'
-                  )
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'AMIId': ami_id})
+                instanceId = event['ResourceProperties']['Instance']
+                if (not instanceId):
+                  raise 'InstanceID required'
+
+                if not 'RequestType' in event:
+                  success({'Data': 'Unhandled request type'})
+                  return
+                  
+                if event['RequestType'] == 'Delete':
+                  if (not physicalId.startswith('ami-')):
+                    raise 'Unknown PhysicalId: %s' % physicalId
+                  
+                  ec2client = boto3.client('ec2')
+                  images = ec2client.describe_images(ImageIds=[physicalId])
+                  for image in images['Images']:
+                    ec2.Image(image['ImageId']).deregister()
+                    snapshots = ([bdm['Ebs']['SnapshotId'] 
+                                  for bdm in image['BlockDeviceMappings'] 
+                                  if 'Ebs' in bdm and 'SnapshotId' in bdm['Ebs']])
+                    for snapshot in snapshots:
+                      ec2.Snapshot(snapshot).delete()
+
+                  success({'Data': 'OK'})
+                elif event['RequestType'] in set(['Create', 'Update']):
+                  if not physicalId:  # AMI creation has not been requested yet
+                    instance = ec2.Instance(instanceId)
+                    instance.wait_until_stopped()
+
+                    image = instance.create_image(Name="Automatic from CloudFormation stack ${AWS::StackName}")
+
+                    physicalId = image.image_id
+                  else:
+                    logger.info('Continuing in awaiting image available: %s\n' % physicalId)
+
+                  ec2client = boto3.client('ec2')
+                  waiter = ec2client.get_waiter('image_available')
+
+                  try:
+                    waiter.wait(ImageIds=[physicalId], WaiterConfig={'Delay': 30, 'MaxAttempts': 6})
+                  except WaiterError as e:
+                    # Request the same event but set PhysicalResourceId so that the AMI is not created again
+                    event['PhysicalResourceId'] = physicalId
+                    logger.info('Timeout reached, continuing function: %s\n' % json.dumps(event))
+                    lambda_client = boto3.client('lambda')
+                    lambda_client.invoke(FunctionName=context.invoked_function_arn, 
+                                          InvocationType='Event',
+                                          Payload=json.dumps(event))
+                    return
+
+                  success({'Data': 'OK'})
+                else:
+                  success({'Data': 'OK'})
               except Exception as e:
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Data': str(e)})
-    Description: Creating custom image of WebServer
+                failed(e)
+      Runtime: python3.11
+      Timeout: 300
     DependsOn: LambdaExecutionRole
   #This parameter stores the ID of the Amazon Machine Image (AMI) created by the Lambda function for deploying EC2 instances.
   AmiIdParameter:
@@ -537,6 +629,11 @@ Resources:
             Principal:
               Service: 'lambda.amazonaws.com'
             Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: 'LambdaExecutionPolicy'
           PolicyDocument:
@@ -544,7 +641,12 @@ Resources:
             Statement:
               - Effect: 'Allow'
                 Action:
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeImages'
                   - 'ec2:CreateImage'
+                  - 'ec2:DeregisterImage'
+                  - 'ec2:DescribeSnapshots'
+                  - 'ec2:DeleteSnapshot'
                   - 'ssm:PutParameter'
                 Resource: '*'
               - Effect: 'Allow'
@@ -559,7 +661,8 @@ Resources:
     Type: 'Custom::AMIcreation'
     Properties:
       ServiceToken: !GetAtt AMICreationLambdaFunction.Arn
-    DependsOn: WebServer
+      Instance: !Ref Instance
+    DependsOn: AMICreate
 
 Outputs:
 
@@ -568,14 +671,14 @@ Outputs:
       - ''
       - - 'http://'
         - !GetAtt 
-          - WebServer
+          - Instance
           - PublicDnsName
         - /wordpress
     Description: WordPress Website
 
   AMIID:
     Description: "ID of the AMI created by the Lambda function. Use this ID as a parameter when creating subsequent stacks."
-    Value: !Ref AmiIdParameter
+    Value: !Ref AMICreationCustomResource
   
   AZ1Public1SGId:
     Description: "ID of Security Group for AZ1 Public Subnet 1"
